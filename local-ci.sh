@@ -160,12 +160,13 @@ if [ "$SECRETS" = 1 ]; then
   range=${CI_SECRETS_RANGE:-}
   if [ -z "$range" ]; then
     if [ -n "$(git remote 2>/dev/null)" ]; then
-      range="--not --remotes"
+      # HEAD is needed as the positive end: `--not --remotes` alone walks nothing.
+      range="HEAD --not --remotes"
     else
       range="--all"
     fi
   fi
-  out=$(gitleaks git . --log-opts="$range" --redact --no-banner 2>&1)
+  out=$(gitleaks git . --log-opts="$range" --redact --no-banner -v 2>&1)
   if [ $? -eq 0 ]; then
     say "${green}✓${reset} no secrets in what this push would publish"
     exit 0
