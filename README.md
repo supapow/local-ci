@@ -145,6 +145,13 @@ Vercel's convention for this command is inverted: **exit 0 skips the build, exit
 1 builds**. The script prints its decision (`[ci-gate] BUILD — …` /
 `[ci-gate] SKIP — …`) into the deployment log.
 
+**Monorepos:** the ignore command runs inside the project's **Root Directory**,
+so the gate has to be reachable from there. Either put it inside that folder
+(`apps/web/scripts/vercel-gate.mjs`, referenced as `node
+scripts/vercel-gate.mjs`) or leave it at the repo root and point up
+(`node ../../scripts/vercel-gate.mjs`). The first is the safer of the two: the
+path stays valid if you ever change the Root Directory back to the repo.
+
 ### The token
 
 Create a **fine-grained personal access token**, scoped to that one repository,
