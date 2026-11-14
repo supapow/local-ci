@@ -189,7 +189,7 @@ if [ "$INSTALL_HOOK" = 1 ]; then
   fi
   chmod +x .githooks/pre-push 2>/dev/null || true
   say ""
-  note "  git push now runs: ./scripts/local-ci.sh --auto --fast --changed"
+  note "  git push now runs: secrets scan, then ./scripts/local-ci.sh --auto --fast --changed"
   note "  skip once with CI_SKIP=1 git push, or git push --no-verify"
   note "  undo with: git config --unset core.hooksPath"
   exit 0
