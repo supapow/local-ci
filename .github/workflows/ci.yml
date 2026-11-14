@@ -1,0 +1,40 @@
+name: CI
+
+# The repo dogfoods its own idea: short, hermetic, no secrets.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: syntax · contract · self-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Shell syntax
+        run: |
+          bash -n local-ci.sh
+          bash -n install.sh
+          bash -n .githooks/pre-push
+          bash -n test/self-test.sh
+
+      - name: The gate's contract
+        run: node test/gate-test.mjs
+
+      - name: The runner's behaviour
+        run: bash test/self-test.sh

@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# The `git push` gate, installed by `local-ci.sh --install-hook`.
+#
+# It asks GitHub first: while Actions is actually running this repo, the push is
+# left to CI and this exits immediately; when the month's minutes are spent —
+# runs appear and fail in ~2s with no steps — it runs the fast steps here
+# instead. No install and no build: the full suite is `local-ci.sh`, and
+# `local-ci.sh --status` attests a pushed commit for the Vercel gate.
+#
+# Skip it once with:  CI_SKIP=1 git push   (or: git push --no-verify)
+
+set -uo pipefail
+
+if [ "${CI_SKIP:-}" = 1 ]; then
+  echo "pre-push: CI_SKIP=1 — local CI skipped"
+  exit 0
+fi
+
+root=$(git rev-parse --show-toplevel) || exit 0
+
+# The checks read the working tree, which is what a push is *about* only when it
+# is clean. Say so rather than letting a green run imply the commit was tested.
+if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+  echo "pre-push: uncommitted changes — checking the working tree, not $(git rev-parse --short HEAD)"
+fi
+
+exec bash "$root/scripts/local-ci.sh" --auto --fast --changed

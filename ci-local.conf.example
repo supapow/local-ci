@@ -1,0 +1,39 @@
+# ci-local.conf — the steps `scripts/local-ci.sh` runs, in order.
+#
+# One line per step:
+#
+#   step "<label>" <kind> "<command>"
+#
+# `kind` is only used to make `--fast` / `--no-install` / `--no-build` cheap:
+#
+#   install   skipped by --fast and --no-install
+#   build     skipped by --fast and --no-build
+#   anything  always runs (use `check`, `test`, `lint`, … for readability)
+#
+# Commands run through `bash -c` from the repository root, one at a time, and
+# stop at the first failure — the same discipline as a CI job. Mirror your
+# workflow's steps here instead of inventing new ones.
+
+# ── Node, with npm (replace these four lines with your own)
+step "install"   install "npm ci"
+step "typecheck" check   "npx tsc --noEmit"
+step "test"      check   "npm test"
+step "build"     build   "npm run build"
+
+# ── Bun workspace (a Vite app in apps/web, for example)
+# step "install"   install "bun install --frozen-lockfile"
+# step "typecheck" check   "bun run lint"
+# step "test"      check   "cd apps/web && bun run test"
+# step "build"     build   "bun run build"
+
+# ── Python
+# step "install" install "pip install -r requirements.txt"
+# step "lint"    check   "ruff check ."
+# step "test"    check   "pytest -q"
+
+# ── Go
+# step "test"  check "go vet ./..."
+# step "test"  check "go test ./..."
+# step "build" build "go build ./..."
+
+# ── Anything else: one command per line, and the exit code is the verdict.

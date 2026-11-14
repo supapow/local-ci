@@ -1,0 +1,4 @@
+# The mode cache lives in the git dir, but a run started outside one would
+# drop it here.
+local-ci-mode
+*.log
