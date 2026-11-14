@@ -245,12 +245,14 @@ ATTEST_READY=0
 CONTEXT=${CI_ATTESTATION_CONTEXT:-ci/local}
 
 attest_setup() {
-  command -v gh >/dev/null 2>&1 \
-    || die "--status needs the GitHub CLI (https://cli.github.com), and an authenticated session."
-  gh auth status >/dev/null 2>&1 || die "--status needs an authenticated gh session (gh auth status)."
+  # Cheapest and most certain refusal first: a green run on a dirty tree would
+  # describe the tree, not the commit, and that needs no network to establish.
   if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
     die "--status refused: the working tree has uncommitted changes, so a green run would describe the tree, not the commit. Commit first (or run without --status)."
   fi
+  command -v gh >/dev/null 2>&1 \
+    || die "--status needs the GitHub CLI (https://cli.github.com), and an authenticated session."
+  gh auth status >/dev/null 2>&1 || die "--status needs an authenticated gh session (gh auth status)."
   SLUG=$(github_slug) || die "could not work out the GitHub repo slug (no gh remote, no origin URL)."
   SHA=$(git rev-parse HEAD) || die "could not read HEAD."
   ATTEST_READY=1
