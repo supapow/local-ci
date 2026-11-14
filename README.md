@@ -3,6 +3,8 @@
 **GitHub's checks, on your machine, when the minutes run out — and a Vercel
 build gate that believes them.**
 
+[![CI](https://github.com/supapow/local-ci/actions/workflows/ci.yml/badge.svg)](https://github.com/supapow/local-ci/actions/workflows/ci.yml)
+
 Two small files and a hook. No service, no account, no npm package.
 
 ---
