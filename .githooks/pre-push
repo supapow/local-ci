@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # The `git push` gate, installed by `local-ci.sh --install-hook`.
 #
-# It asks GitHub first: while Actions is actually running this repo, the push is
-# left to CI and this exits immediately; when the month's minutes are spent —
-# runs appear and fail in ~2s with no steps — it runs the fast steps here
-# instead. No install and no build: the full suite is `local-ci.sh`, and
+# Two checks, cheapest first:
+#   1. secrets in what this push would publish (gitleaks, if it is installed)
+#   2. the fast steps of ci-local.conf — but only when GitHub Actions is not
+#      already checking this repo. While the minutes last, the push is left to
+#      CI and this exits immediately; when they run out, runs appear and fail in
+#      ~2s with no steps, and the checks happen here instead.
+#
+# No install and no build: the full suite is `local-ci.sh`, and
 # `local-ci.sh --status` attests a pushed commit for the Vercel gate.
 #
 # Skip it once with:  CI_SKIP=1 git push   (or: git push --no-verify)
@@ -23,5 +27,8 @@ root=$(git rev-parse --show-toplevel) || exit 0
 if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
   echo "pre-push: uncommitted changes — checking the working tree, not $(git rev-parse --short HEAD)"
 fi
+
+# Seconds, and the one check GitHub does not run for a private repository.
+bash "$root/scripts/local-ci.sh" --secrets || exit 1
 
 exec bash "$root/scripts/local-ci.sh" --auto --fast --changed

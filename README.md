@@ -120,6 +120,7 @@ Commands run through `bash -c` from the repository root. See
 | `./scripts/local-ci.sh --auto` | exit 0 when GitHub Actions is still running this repo |
 | `./scripts/local-ci.sh --mode` | print `actions` or `local` |
 | `./scripts/local-ci.sh --list` | print the steps |
+| `./scripts/local-ci.sh --secrets` | gitleaks on the commits this push would publish |
 | `./scripts/local-ci.sh --install-hook` | make `git push` run `--auto --fast --changed` |
 
 Exit codes: `0` passed (or nothing to do), `1` a step failed, `2` could not run.
@@ -132,6 +133,33 @@ checks.
 
 `--status` refuses a dirty working tree: a green run there describes the tree,
 not the commit you are attesting. Post it **after** pushing.
+
+## Secrets
+
+The pre-push hook runs [`gitleaks`](https://github.com/gitleaks/gitleaks) over the
+commits the push would publish — not the whole history, so a legacy leak does not
+block every push — and stops the push if it finds one. It is optional: without
+the binary the scan is skipped with a note, because a missing tool must never
+become a missing push.
+
+```sh
+brew install gitleaks                                                  # macOS
+# linux: https://github.com/gitleaks/gitleaks/releases (single binary)
+
+./scripts/local-ci.sh --secrets                                        # by hand
+CI_SECRETS_RANGE=origin/main..HEAD ./scripts/local-ci.sh --secrets     # one range
+```
+
+Why this is worth the one `brew install`: GitHub's secret scanning and push
+protection are **free for public repositories** and part of the paid Secret
+Protection SKU for private ones ($19 per active committer per month, sold to
+organisations). A private repository on a free plan gets **no server-side scan at
+all** — the alerts API answers 404 — and git history is forever. gitleaks is
+MIT-licensed, runs offline, and reads that history.
+
+It is also not the same question as the gate. The gate decides *whether a commit
+was checked*; this decides *whether the commit is safe to publish*. Nothing
+downstream will ever un-publish a key.
 
 ## The Vercel half
 

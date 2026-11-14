@@ -25,13 +25,14 @@
 #   ./scripts/local-ci.sh --auto         # exit 0 when GitHub Actions is running
 #   ./scripts/local-ci.sh --mode         # print "actions" or "local"
 #   ./scripts/local-ci.sh --list         # print the steps and exit
+#   ./scripts/local-ci.sh --secrets      # gitleaks on the commits not yet pushed
 #   ./scripts/local-ci.sh --install-hook # make `git push` run --auto --fast
 #
 # The Vercel half is vercel-gate.mjs; see README.md.
 
 set -uo pipefail
 
-cd "$(dirname "$0")/.." || exit 2
+cd "${0%/*}/.." 2>/dev/null || cd "$(dirname "$0")/.." || exit 2
 
 # ---------------------------------------------------------------- presentation
 
@@ -119,6 +120,7 @@ ATTEST=0
 INSTALL_HOOK=0
 AUTO=0
 LIST=0
+SECRETS=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -129,6 +131,7 @@ while [ $# -gt 0 ]; do
     --status)       ATTEST=1 ;;
     --auto)         AUTO=1 ;;
     --list)         LIST=1 ;;
+    --secrets)      SECRETS=1 ;;
     --install-hook) INSTALL_HOOK=1 ;;
     --mode)         if [ "$(ci_mode)" = actions ]; then say "actions  $MODE_BLURB_ACTIONS"
                     else say "local    $MODE_BLURB_LOCAL"; fi; exit 0 ;;
@@ -139,7 +142,40 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-# -------------------------------------------------------------------- the hook
+# ------------------------------------------------------------------- secrets
+#
+# The one check GitHub will not run for a private repository on a free plan, and
+# the only one whose whole job is the thing you cannot undo: a credential is
+# public the moment it is pushed. Scoped to what this push would publish, so a
+# legacy leak in history does not block every push forever.
+#
+# gitleaks is optional. Without it the scan is skipped with a note, because a
+# missing tool must never become a missing push.
+if [ "$SECRETS" = 1 ]; then
+  if ! command -v gitleaks >/dev/null 2>&1; then
+    say "${yellow}·${reset} gitleaks is not installed — secrets scan skipped"
+    note "  macOS: brew install gitleaks · https://github.com/gitleaks/gitleaks"
+    exit 0
+  fi
+  range=${CI_SECRETS_RANGE:-}
+  if [ -z "$range" ]; then
+    if [ -n "$(git remote 2>/dev/null)" ]; then
+      range="--not --remotes"
+    else
+      range="--all"
+    fi
+  fi
+  out=$(gitleaks git . --log-opts="$range" --redact --no-banner 2>&1)
+  if [ $? -eq 0 ]; then
+    say "${green}✓${reset} no secrets in what this push would publish"
+    exit 0
+  fi
+  printf '%s\n' "$out"
+  warn "a credential was found in what this push would publish (values redacted above)."
+  warn "Rotate it first: a pushed key is public even if the commit is amended later."
+  exit 1
+fi
+
 
 if [ "$INSTALL_HOOK" = 1 ]; then
   current=$(git config --get core.hooksPath 2>/dev/null || true)

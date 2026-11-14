@@ -114,6 +114,18 @@ mv ci-local.conf ci-local.conf.bak
 check "missing config exits 2" 2 "$(run)"
 mv ci-local.conf.bak ci-local.conf
 
+# 11. --secrets is optional, and its verdict is gitleaks' exit code
+mkdir -p "$work/bin"
+printf '#!/bin/sh\nexit 0\n' > "$work/bin/gitleaks"; chmod +x "$work/bin/gitleaks"
+check "secrets scan passes when gitleaks is happy" 0 \
+  "$(PATH="$work/bin:$PATH" bash scripts/local-ci.sh --secrets >/dev/null 2>&1; echo $?)"
+printf '#!/bin/sh\necho "Finding: REDACTED"\nexit 1\n' > "$work/bin/gitleaks"; chmod +x "$work/bin/gitleaks"
+check "secrets scan fails on a finding" 1 \
+  "$(PATH="$work/bin:$PATH" bash scripts/local-ci.sh --secrets >/dev/null 2>&1; echo $?)"
+rm -f "$work/bin/gitleaks"
+check "secrets scan is skipped without gitleaks" 0 \
+  "$(PATH="$work/bin:/usr/bin:/bin" bash scripts/local-ci.sh --secrets >/dev/null 2>&1; echo $?)"
+
 echo
 if [ "$fail" -eq 0 ]; then
   echo "all $pass checks passed"
