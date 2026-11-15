@@ -105,6 +105,47 @@ check "--status with a dirty tree exits 2" 2 "$(run --status)"
 grep -q 'uncommitted changes' "$work/out" && ok "and says why" || bad "and says why"
 git checkout -q -- thing.txt
 
+# 8b. --sha names the commit to attest, so it only makes sense with --status
+check "--sha without --status exits 2" 2 "$(run --sha HEAD)"
+grep -q 'only works with --status' "$work/out" && ok "and explains why" || bad "and explains why"
+
+# 8c. a commit whose tree differs from HEAD is refused before any network call
+git commit -q --allow-empty -m "same tree a"
+same_a=$(git rev-parse HEAD)
+git commit -q --allow-empty -m "same tree b"
+same_b=$(git rev-parse HEAD)
+older=$(git rev-parse HEAD~3)
+check "--sha with a different tree exits 2" 2 "$(run --status --sha "$older")"
+grep -q 'different tree' "$work/out" && ok "and says the tree differs" || bad "and says the tree differs"
+
+# 8d. a same-tree commit gets the statuses, not HEAD (gh is a stub: no network)
+mkdir -p "$work/bin"
+cat > "$work/bin/gh" <<'GH'
+#!/bin/sh
+case "$*" in
+  "auth status") exit 0 ;;
+  "repo view"*) printf 'test/repo\n' ;;
+  "api -X POST"*) printf '%s\n' "$*" >> "$GH_LOG" ;;
+  *) exit 1 ;;
+esac
+GH
+chmod +x "$work/bin/gh"
+post_with_fake_gh() {
+  GH_LOG="$work/gh.log" PATH="$work/bin:$PATH" bash scripts/local-ci.sh "$@" >"$work/out" 2>&1
+  echo $?
+}
+
+rm -f "$work/gh.log"
+check "--status --sha accepts a same-tree commit" 0 "$(post_with_fake_gh --status --sha "$same_a")"
+check "it posts twice, to that sha" 2 "$(grep -c "statuses/$same_a" "$work/gh.log")"
+check "pending first" pending "$(head -1 "$work/gh.log" | grep -o 'state=[a-z]*' | cut -d= -f2)"
+check "success last" success "$(tail -1 "$work/gh.log" | grep -o 'state=[a-z]*' | cut -d= -f2)"
+check "and never to HEAD" 0 "$(grep -c "statuses/$same_b" "$work/gh.log")"
+
+rm -f "$work/gh.log"
+check "--status without --sha still attests HEAD" 0 "$(post_with_fake_gh --status)"
+check "…at HEAD's sha" 2 "$(grep -c "statuses/$same_b" "$work/gh.log")"
+
 # 9. --mode answers without exploding
 check "--mode exits 0" 0 "$(run --mode)"
 grep -qE '^(actions|local)' "$work/out" && ok "--mode prints a verdict" || bad "--mode prints a verdict"

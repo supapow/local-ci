@@ -30,6 +30,8 @@
  * The attestation is a commit status posted by local-ci.sh --status:
  *   - success → build      - pending → wait      - failure → skip
  *   - absent  → skip after the timeout, and say how to produce one
+ * A PR merged in the GitHub UI becomes a NEW merge commit: attest that sha, not
+ * the branch head, with `local-ci.sh --status --sha <merge-sha>`.
  * A run that DID execute stays authoritative: a real red CI is never
  * overridden by a green laptop.
  *
@@ -173,7 +175,7 @@ async function settleOnAttestation(why, otherwise) {
     return false
   }
   if (!unreadable && lastState !== 'local/missing') {
-    log(`no ${CONTEXT} attestation for this commit — post one with: ./scripts/local-ci.sh --status`)
+    log(`no ${CONTEXT} attestation for this commit — post one with: ./scripts/local-ci.sh --status --sha ${SHA}`)
     lastState = 'local/missing'
   }
   return otherwise()
@@ -217,7 +219,12 @@ for (;;) {
   }
 
   if (Date.now() - startedAt >= TIMEOUT_MS) {
-    skip(`CI did not finish within ${Math.round(TIMEOUT_MS / 60_000)} minutes`)
+    skip(
+      `CI did not finish within ${Math.round(TIMEOUT_MS / 60_000)} minutes — ` +
+      (lastState === 'local/missing' || lastState === 'no-runner'
+        ? `nothing attested ${short}: run ./scripts/local-ci.sh --status --sha ${SHA}, then redeploy this deployment`
+        : `if the suite is simply slower than this window, raise CI_GATE_TIMEOUT_MS`),
+    )
   }
 
   await new Promise((resolve) => setTimeout(resolve, POLL_MS))
