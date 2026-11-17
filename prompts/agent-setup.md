@@ -71,6 +71,9 @@ stop to ask me if reality does not match an assumption.
      ci/local commit status for HEAD. Confirm it with:
        gh api repos/{owner}/{repo}/commits/HEAD/statuses --jq '.[] | select(.context=="ci/local")'
    - ./scripts/local-ci.sh --status must refuse a dirty tree; try it and confirm.
+   - ./scripts/local-ci.sh --status --fast must also refuse, with a "partial"
+     message: a run that skipped install/build is not an attestation. Do not
+     override that with CI_ATTEST_PARTIAL=1.
    - The case that catches everyone: a pull request merged in the GitHub UI is a
      new merge commit, so a green run on the branch head attests the wrong sha.
      Show me the release command and keep it for the repository's instructions:
@@ -82,13 +85,16 @@ stop to ask me if reality does not match an assumption.
 9. Leave the instructions where the next session will read them. Append the
    block in /tmp/local-ci/prompts/agents-md.md to AGENTS.md (or CLAUDE.md, or
    whichever instruction file this repository actually uses) as a new section.
+   You can also run /tmp/local-ci/install.sh --agent-md, which writes a marked
+   section you can replace later; verify it landed and skip the manual append.
    Do not rewrite existing text. If the repository has both, put it in the one
    that is read here and name the other in your report.
 
 Rules for this whole task:
 - Never weaken the gate: do not edit vercel-gate.mjs to always build, do not
   remove steps from ci-local.conf to make a run green, and do not post a
-  ci/local success you did not earn.
+  ci/local success you did not earn. A partial run (`--fast`, `--no-build`) does
+  not earn one; `CI_ATTEST_PARTIAL=1` is the recorded exception, not the default.
 - Never release with `vercel --prod`: it bypasses the gate and uploads the
   working tree with no commit metadata. Attest the sha and redeploy; do not push
   an empty commit to "retry" a cancelled build.

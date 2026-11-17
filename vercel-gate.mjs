@@ -29,6 +29,7 @@
  *
  * The attestation is a commit status posted by local-ci.sh --status:
  *   - success → build      - pending → wait      - failure → skip
+ *   - error   → skip       (the local run aborted; it did not pass)
  *   - absent  → skip after the timeout, and say how to produce one
  * A PR merged in the GitHub UI becomes a NEW merge commit: attest that sha, not
  * the branch head, with `local-ci.sh --status --sha <merge-sha>`.
@@ -166,6 +167,12 @@ async function settleOnAttestation(why, otherwise) {
   }
   if (attestation?.state === 'failure') {
     skip(`${why}; local CI attested a failure — ${attestation.description}`)
+  }
+  // `error` is GitHub's "the run could not complete" state. A local run that
+  // aborted is no evidence of a pass, and waiting the full window for a status
+  // that will not change only burns the deployment's slot.
+  if (attestation?.state === 'error') {
+    skip(`${why}; local CI reported an error — ${attestation.description}`)
   }
   if (attestation?.state === 'pending') {
     if (lastState !== 'local/pending') {

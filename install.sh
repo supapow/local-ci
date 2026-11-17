@@ -5,6 +5,7 @@
 #   ./install.sh --dir ../other  # into another repo
 #   ./install.sh --hook          # also make `git push` decide (writes core.hooksPath)
 #   ./install.sh --force         # overwrite files that already exist
+#   ./install.sh --agent-md      # append the release rules to AGENTS.md/CLAUDE.md
 #
 # It copies:  scripts/local-ci.sh, scripts/vercel-gate.mjs, .githooks/pre-push,
 # and (if missing) ci-local.conf from ci-local.conf.example.
@@ -17,23 +18,33 @@
 set -uo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
-target=$(git rev-parse --show-toplevel 2>/dev/null) || {
-  echo "not a git repository — run this from the repo you want to set up" >&2
-  exit 2
-}
+target=""
 hook=0
 force=0
+agent_md=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --dir)   shift; target=$(cd "${1:-}" 2>/dev/null && pwd) || { echo "no such directory: ${1:-}" >&2; exit 2; } ;;
     --hook)  hook=1 ;;
     --force) force=1 ;;
+    --agent-md) agent_md=1 ;;
     -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown flag: $1" >&2; exit 2 ;;
   esac
   shift
 done
+
+if [ -z "$target" ]; then
+  target=$(git rev-parse --show-toplevel 2>/dev/null) || {
+    echo "not a git repository — run this from the repo you want to set up, or pass --dir" >&2
+    exit 2
+  }
+fi
+git -C "$target" rev-parse --git-dir >/dev/null 2>&1 || {
+  echo "not a git repository: $target" >&2
+  exit 2
+}
 
 copy() { # source, destination
   local src="$1" dst="$2"
@@ -59,6 +70,33 @@ if [ "$hook" = 1 ]; then
     && echo "  ✓ core.hooksPath → .githooks (this clone only)"
 fi
 
+# Opt-in: put the release rules where the next agent reads them. The section is
+# marked so a re-run replaces it instead of appending a second copy.
+if [ "$agent_md" = 1 ]; then
+  section="$here/prompts/agents-md.md"
+  if [ ! -f "$section" ]; then
+    echo "  · prompts/agents-md.md is missing — agent instructions skipped" >&2
+  else
+    if [ -f "$target/AGENTS.md" ]; then doc="$target/AGENTS.md"
+    elif [ -f "$target/CLAUDE.md" ]; then doc="$target/CLAUDE.md"
+    else doc="$target/AGENTS.md"; fi
+    if [ -f "$doc" ] && grep -q '<!-- local-ci:begin -->' "$doc"; then
+      tmp="$doc.local-ci.$$"
+      awk '
+        /<!-- local-ci:begin -->/ { inside = 1; next }
+        /<!-- local-ci:end -->/   { inside = 0; next }
+        !inside { print }
+      ' "$doc" > "$tmp" && mv "$tmp" "$doc"
+    fi
+    {
+      printf '\n<!-- local-ci:begin -->\n'
+      cat "$section"
+      printf '<!-- local-ci:end -->\n'
+    } >> "$doc"
+    echo "  → $doc (release rules, marked section)"
+  fi
+fi
+
 cat <<'NEXT'
 
 Next:
@@ -77,8 +115,10 @@ Next:
      If that deployment was already cancelled by the gate, redeploy it. Never
      release with `vercel --prod`: it bypasses the gate and leaves no commit.
 
-Agent instructions for the repository (append, do not overwrite):
+Agent instructions for the repository:
+   install.sh --agent-md appends them to AGENTS.md (or CLAUDE.md) as a marked
+   section. To do it by hand, append:
 NEXT
 
 echo "  $here/prompts/agents-md.md"
-echo "  → AGENTS.md / CLAUDE.md — copy it before this clone is removed."
+echo "  → AGENTS.md / CLAUDE.md — copy the text before this clone is removed."

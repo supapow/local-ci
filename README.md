@@ -5,7 +5,7 @@ build gate that believes them.**
 
 [![CI](https://github.com/supapow/local-ci/actions/workflows/ci.yml/badge.svg)](https://github.com/supapow/local-ci/actions/workflows/ci.yml)
 
-Two small files and a hook. No service, no account, no npm package.
+Two small scripts and a hook. No service, no account, no npm package.
 
 ---
 
@@ -80,7 +80,8 @@ Then:
 5. Redeploy once with **Use project's Ignore Build Step** unticked, so the gate
    you just committed is the one that runs.
 6. Put the release rules where your agent reads them: append
-   [`prompts/agents-md.md`](prompts/agents-md.md) to `AGENTS.md` / `CLAUDE.md`.
+   [`prompts/agents-md.md`](prompts/agents-md.md) to `AGENTS.md` / `CLAUDE.md`
+   (or run `install.sh --agent-md`, which writes a marked, replaceable section).
    They exist because the obvious readings are wrong — a two-second red is not
    a test failure, a GitHub merge commit is not your `HEAD`, and a cancelled
    deploy reports as a *successful* status.
@@ -121,8 +122,8 @@ Commands run through `bash -c` from the repository root. See
 | `./scripts/local-ci.sh` | every step |
 | `./scripts/local-ci.sh --fast` | steps that are not `install`/`build` |
 | `./scripts/local-ci.sh --changed` | exit 0 when every change is markdown |
-| `./scripts/local-ci.sh --status` | run, then post the `ci/local` commit status for `HEAD` |
-| `./scripts/local-ci.sh --status --sha <sha>` | same, for `<sha>` when its tree matches `HEAD` |
+| `./scripts/local-ci.sh --status` | run every step, then post the `ci/local` status for `HEAD` |
+| `./scripts/local-ci.sh --status --sha <sha>` | same, for `<sha>` (any rev, e.g. `origin/main`) when its tree matches `HEAD` |
 | `./scripts/local-ci.sh --auto` | exit 0 when GitHub Actions is still running this repo |
 | `./scripts/local-ci.sh --mode` | print `actions` or `local` |
 | `./scripts/local-ci.sh --list` | print the steps |
@@ -141,6 +142,12 @@ checks.
 not the commit you are attesting. Post it **after** pushing. `--sha` attests a
 different commit — the one a UI merge created — but only when its tree is
 identical to `HEAD`'s; see [Releasing](#releasing).
+
+`--status` also refuses `--fast`, `--no-install` and `--no-build`. A run that
+skipped the install or the build cannot support "this commit passed the suite",
+and the gate only sees the state, not the caveat. If you deliberately want the
+weaker claim, set `CI_ATTEST_PARTIAL=1`; the status description then records
+which kinds were skipped.
 
 ## Secrets
 
@@ -233,12 +240,15 @@ named commit, but only when that commit's tree is identical to `HEAD`'s. When it
 is not, the script refuses instead of vouching for code it did not run. The
 honest ways to get a matching tree are to check the commit out (`git switch
 --detach <sha>`) or to merge locally and push, so that `HEAD` *is* the commit
-Vercel builds.
+Vercel builds. It takes any rev, so `--sha origin/main` is the shortest correct
+form after a UI merge.
 
 `pending` is posted before the first step, so the gate waits for the suite
 instead of guessing; `success`/`failure` follows. That only works while the
 suite finishes inside `CI_GATE_TIMEOUT_MS` (12 minutes by default). A slower
-suite must raise that variable in Vercel, or it cancels its own deploy.
+suite must raise that variable in Vercel, or it cancels its own deploy. A
+`ci/local` **error** state means the local run aborted: the gate reads it as no
+pass and skips, so rerun it and redeploy.
 
 ### If the gate already gave up, redeploy — do not push again
 
@@ -274,11 +284,19 @@ vercel ls --environment production --json \
 A `-` in the first column is a CLI deployment with no commit behind it.
 `vercel inspect <url>` shows the same metadata.
 
+If the CLI ever emits a raw control byte — it can pick one up from a commit
+message — `jq` rejects the whole payload before printing anything. Strip the
+bytes JSON forbids inside strings first:
+`... --json | LC_ALL=C tr -d '\000-\010\013\014\016-\037' | jq ...`.
+
 ## Limits worth knowing before you rely on this
 
 - **The attestation is self-asserted.** `ci/local` is a commit status your own
   machine posted. GitHub did not verify anything. That is fine for a solo
   repository; on a team it means "a laptop ran the suite", not "CI ran".
+- **A partial suite cannot be attested.** `--status` refuses the skip flags: a
+  run that never installed or built is not the green the gate reads.
+  `CI_ATTEST_PARTIAL=1` is the explicit exception, written into the status.
 - **A skipped deployment is not free.** Vercel counts a cancelled deployment
   against the plan's daily deployment quota, and it holds a build slot while the
   gate waits. A month in local mode is cheap, but not free.
