@@ -70,4 +70,15 @@ Next:
      GITHUB_READ_TOKEN. Both permissions are required — see README.md.
   5. One-off: redeploy with Vercel's "Use project's Ignore Build Step" unticked,
      so the gate that just got committed is the one that runs next time.
+  6. After a pull request is merged in the UI, attest the commit Vercel builds —
+     not your branch head, and not your local HEAD:
+       git fetch origin main
+       ./scripts/local-ci.sh --status --sha "$(git rev-parse origin/main)"
+     If that deployment was already cancelled by the gate, redeploy it. Never
+     release with `vercel --prod`: it bypasses the gate and leaves no commit.
+
+Agent instructions for the repository (append, do not overwrite):
 NEXT
+
+echo "  $here/prompts/agents-md.md"
+echo "  → AGENTS.md / CLAUDE.md — copy it before this clone is removed."

@@ -11,7 +11,8 @@
 #
 # It is not a CI server. Nothing runs it for you: run it before a push,
 # `--install-hook` to let `git push` decide, `--status` after a push while
-# Actions is out.
+# Actions is out — and `--status --sha <sha>` when the commit Vercel builds is
+# not HEAD (a PR merged in the GitHub UI is a new merge commit).
 #
 # Exit codes: 0 pass (or nothing to do), 1 a step failed, 2 could not run.
 #
@@ -21,7 +22,9 @@
 #   ./scripts/local-ci.sh --no-build     # skip `build` steps
 #   ./scripts/local-ci.sh --no-install   # skip `install` steps
 #   ./scripts/local-ci.sh --changed      # exit 0 when every change is markdown
-#   ./scripts/local-ci.sh --status       # post the `ci/local` commit status
+#   ./scripts/local-ci.sh --status       # post the `ci/local` status for HEAD
+#   ./scripts/local-ci.sh --status --sha <sha>
+#                                        # …for <sha>, when its tree matches HEAD
 #   ./scripts/local-ci.sh --auto         # exit 0 when GitHub Actions is running
 #   ./scripts/local-ci.sh --mode         # print "actions" or "local"
 #   ./scripts/local-ci.sh --list         # print the steps and exit
@@ -31,6 +34,10 @@
 # The Vercel half is vercel-gate.mjs; see README.md.
 
 set -uo pipefail
+
+# Resolve the script itself before moving to the repo root: $0 is usually
+# relative and would otherwise stop resolving after the cd. --help needs it.
+self=$(cd "$(dirname "$0")" 2>/dev/null && pwd)/$(basename "$0")
 
 cd "${0%/*}/.." 2>/dev/null || cd "$(dirname "$0")/.." || exit 2
 
@@ -121,6 +128,7 @@ INSTALL_HOOK=0
 AUTO=0
 LIST=0
 SECRETS=0
+SHA_TARGET=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -129,6 +137,7 @@ while [ $# -gt 0 ]; do
     --no-build)     SKIP_BUILD=1 ;;
     --changed)      DOCS_ONLY=1 ;;
     --status)       ATTEST=1 ;;
+    --sha)          shift; SHA_TARGET=${1:-}; [ -n "$SHA_TARGET" ] || die "--sha needs a commit: --status --sha <sha>" ;;
     --auto)         AUTO=1 ;;
     --list)         LIST=1 ;;
     --secrets)      SECRETS=1 ;;
@@ -136,11 +145,15 @@ while [ $# -gt 0 ]; do
     --mode)         if [ "$(ci_mode)" = actions ]; then say "actions  $MODE_BLURB_ACTIONS"
                     else say "local    $MODE_BLURB_LOCAL"; fi; exit 0 ;;
     --config)       shift; CONFIG=${1:-$CONFIG} ;;
-    -h|--help)      sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)      awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "$self"; exit 0 ;;
     *)              die "unknown flag: $1 (try --help)" ;;
   esac
   shift
 done
+
+if [ -n "$SHA_TARGET" ] && [ "$ATTEST" != 1 ]; then
+  die "--sha names the commit to attest, so it only works with --status: ./scripts/local-ci.sh --status --sha <sha>"
+fi
 
 # ------------------------------------------------------------------- secrets
 #
@@ -282,16 +295,36 @@ ATTEST_READY=0
 CONTEXT=${CI_ATTESTATION_CONTEXT:-ci/local}
 
 attest_setup() {
+  local target head
   # Cheapest and most certain refusal first: a green run on a dirty tree would
   # describe the tree, not the commit, and that needs no network to establish.
   if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
     die "--status refused: the working tree has uncommitted changes, so a green run would describe the tree, not the commit. Commit first (or run without --status)."
   fi
+  head=$(git rev-parse HEAD) || die "could not read HEAD."
+  target=$head
+
+  # `--sha` exists because the commit Vercel builds is often not HEAD: a PR
+  # merged in the GitHub UI becomes a new merge commit, and a status on the
+  # branch head is a status on a commit nothing deploys. The suite still runs
+  # against the working tree, so the named commit has to describe the same
+  # content — a tree comparison, refused loudly rather than guessed at.
+  if [ -n "$SHA_TARGET" ]; then
+    target=$(git rev-parse --verify --quiet "$SHA_TARGET^{commit}" 2>/dev/null) \
+      || die "cannot find $SHA_TARGET locally. A merge made on GitHub lives only on the remote until it is fetched: git fetch origin main (or the branch you merged into)."
+    if [ "$target" != "$head" ]; then
+      if ! git diff --quiet "$head" "$target" 2>/dev/null; then
+        die "--sha ${SHA_TARGET} has a different tree from HEAD (${head:0:8}), so a green run here would not describe it. Check that commit out (git switch --detach ${SHA_TARGET}) and run --status again, or merge its content first."
+      fi
+      note "  attesting ${target:0:8} — same tree as HEAD (${head:0:8})"
+    fi
+  fi
+
+  SHA=$target
   command -v gh >/dev/null 2>&1 \
     || die "--status needs the GitHub CLI (https://cli.github.com), and an authenticated session."
   gh auth status >/dev/null 2>&1 || die "--status needs an authenticated gh session (gh auth status)."
   SLUG=$(github_slug) || die "could not work out the GitHub repo slug (no gh remote, no origin URL)."
-  SHA=$(git rev-parse HEAD) || die "could not read HEAD."
   ATTEST_READY=1
 }
 
@@ -307,6 +340,7 @@ if [ "$ATTEST" = 1 ]; then
     note "attestation: $CONTEXT → pending for ${SHA:0:8}"
   else
     warn "could not post the pending $CONTEXT status — the result will still be reported at the end"
+    note "  if ${SHA:0:8} exists only on this machine, push it first: GitHub cannot accept a status for a commit it has not seen"
   fi
 fi
 
@@ -373,7 +407,8 @@ if [ "$ATTEST_READY" = 1 ]; then
     if post_status success "$ATTEST_DESC"; then
       note "  attested: $CONTEXT → success for ${SHA:0:8}"
     else
-      warn "  could not post the $CONTEXT status — check gh auth and the token's permissions"
+      warn "  could not post the $CONTEXT status — check gh auth, and that ${SHA:0:8} is on the remote"
+      note "  a merge made on GitHub needs git fetch first; an unpushed commit needs git push first"
       exit 2
     fi
   fi

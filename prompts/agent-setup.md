@@ -21,7 +21,7 @@ stop to ask me if reality does not match an assumption.
    - Do not invent steps that the workflow does not run. This tool mirrors CI;
      it must not quietly become a different, weaker or stronger gate.
 
-2. Fetch and install the two files.
+2. Fetch and install the files.
      git clone https://github.com/supapow/local-ci /tmp/local-ci
      /tmp/local-ci/install.sh
    If scripts/local-ci.sh or scripts/vercel-gate.mjs already exist, stop and show
@@ -48,6 +48,9 @@ stop to ask me if reality does not match an assumption.
      "ignoreCommand": "node scripts/vercel-gate.mjs"
    If it does not exist, create it with just that key. If the project is not on
    Vercel, skip this step and say so.
+   In a monorepo the ignore command runs inside the project's Root Directory, so
+   the path is relative to that folder (put vercel.json there and keep the
+   script beside it, or point up: "node ../../scripts/vercel-gate.mjs").
 
 6. The credential is mine to create. Give me exactly these instructions and then
    wait:
@@ -65,22 +68,41 @@ stop to ask me if reality does not match an assumption.
 8. Verify and report:
    - ./scripts/local-ci.sh --mode prints "actions" or "local" and why.
    - On a clean tree, ./scripts/local-ci.sh --status runs the suite and posts a
-     ci/local commit status. Confirm it with:
+     ci/local commit status for HEAD. Confirm it with:
        gh api repos/{owner}/{repo}/commits/HEAD/statuses --jq '.[] | select(.context=="ci/local")'
    - ./scripts/local-ci.sh --status must refuse a dirty tree; try it and confirm.
+   - The case that catches everyone: a pull request merged in the GitHub UI is a
+     new merge commit, so a green run on the branch head attests the wrong sha.
+     Show me the release command and keep it for the repository's instructions:
+       git fetch origin main
+       ./scripts/local-ci.sh --status --sha "$(git rev-parse origin/main)"
+     Confirm that --sha refuses a commit whose tree differs from HEAD, and that
+     it accepts one whose tree matches.
+
+9. Leave the instructions where the next session will read them. Append the
+   block in /tmp/local-ci/prompts/agents-md.md to AGENTS.md (or CLAUDE.md, or
+   whichever instruction file this repository actually uses) as a new section.
+   Do not rewrite existing text. If the repository has both, put it in the one
+   that is read here and name the other in your report.
 
 Rules for this whole task:
 - Never weaken the gate: do not edit vercel-gate.mjs to always build, do not
   remove steps from ci-local.conf to make a run green, and do not post a
   ci/local success you did not earn.
+- Never release with `vercel --prod`: it bypasses the gate and uploads the
+  working tree with no commit metadata. Attest the sha and redeploy; do not push
+  an empty commit to "retry" a cancelled build.
+- A Vercel "success" status is not proof of a release: a cancelled gated build
+  reports as success. Verify from the deployment's commit metadata.
 - Never commit a token, a .env file, or anything from ~/.config/gh.
 - statuses and hooks are opt-in. Ask before either.
 - If the repo's CI is already red for a real reason, say so and stop; that is not
   this tool's job.
 
-When done, give me: the ci-local.conf you wrote, the vercel.json line, the two
-dashboard actions I still have to take (token, and one redeploy with "Use
-project's Ignore Build Step" unticked), and the output of --mode.
+When done, give me: the ci-local.conf you wrote, the vercel.json line, the
+instruction file you appended to (and the section heading), the two dashboard
+actions I still have to take (token, and one redeploy with "Use project's Ignore
+Build Step" unticked), and the output of --mode.
 ```
 
 ---
@@ -93,4 +115,11 @@ project's Ignore Build Step" unticked), and the output of --mode.
   not, and flips back on its own after the monthly reset.
 - A deploy never says *"Canceled by Ignored Build Step"* without a line above it
   in the build log explaining which check was missing.
+- The repository's instructions name the release command and the commit it
+  attests (`--status --sha "$(git rev-parse origin/main)"` after a UI merge), so
+  the next session does not attest the branch head.
+- A release is only called shipped from a READY production deployment whose
+  commit metadata matches the sha — not from a successful commit status, which a
+  cancelled gated build also writes.
+- The agent never reached for `vercel --prod` to get around a skip.
 - The agent never asked for the token, and the token never appears in a diff.

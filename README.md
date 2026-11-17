@@ -36,7 +36,7 @@ seconds, and production silently stays on the previous deployment.
 | Situation | Who checks the code | How the deploy is allowed |
 | --- | --- | --- |
 | Minutes available | GitHub Actions | The gate reads the run |
-| Minutes spent | `./scripts/local-ci.sh` | You run `--status`, the gate reads the attestation |
+| Minutes spent | `./scripts/local-ci.sh` | You run `--status --sha <sha>` for the commit Vercel builds; the gate reads the attestation |
 
 `local-ci.sh` runs the steps from `ci-local.conf` — the same ones your workflow
 runs, in the same order, stopping at the first failure — with timings and a
@@ -79,9 +79,14 @@ Then:
 4. Create the token (below) and set it in Vercel.
 5. Redeploy once with **Use project's Ignore Build Step** unticked, so the gate
    you just committed is the one that runs.
+6. Put the release rules where your agent reads them: append
+   [`prompts/agents-md.md`](prompts/agents-md.md) to `AGENTS.md` / `CLAUDE.md`.
+   They exist because the obvious readings are wrong — a two-second red is not
+   a test failure, a GitHub merge commit is not your `HEAD`, and a cancelled
+   deploy reports as a *successful* status.
 
 There is a copy-paste [agent prompt](prompts/agent-setup.md) if you would rather
-have an AI do 1–5.
+have an AI do the setup.
 
 ## Configure
 
@@ -116,7 +121,8 @@ Commands run through `bash -c` from the repository root. See
 | `./scripts/local-ci.sh` | every step |
 | `./scripts/local-ci.sh --fast` | steps that are not `install`/`build` |
 | `./scripts/local-ci.sh --changed` | exit 0 when every change is markdown |
-| `./scripts/local-ci.sh --status` | run, then post the `ci/local` commit status |
+| `./scripts/local-ci.sh --status` | run, then post the `ci/local` commit status for `HEAD` |
+| `./scripts/local-ci.sh --status --sha <sha>` | same, for `<sha>` when its tree matches `HEAD` |
 | `./scripts/local-ci.sh --auto` | exit 0 when GitHub Actions is still running this repo |
 | `./scripts/local-ci.sh --mode` | print `actions` or `local` |
 | `./scripts/local-ci.sh --list` | print the steps |
@@ -132,7 +138,9 @@ auth, an API error — answers `local`, because the safe direction is to do the
 checks.
 
 `--status` refuses a dirty working tree: a green run there describes the tree,
-not the commit you are attesting. Post it **after** pushing.
+not the commit you are attesting. Post it **after** pushing. `--sha` attests a
+different commit — the one a UI merge created — but only when its tree is
+identical to `HEAD`'s; see [Releasing](#releasing).
 
 ## Secrets
 
@@ -204,6 +212,68 @@ Both permissions are load-bearing. With Actions alone, `GET
 
 The token is fail-closed on purpose: missing or expired means skip, not build.
 
+## Releasing
+
+The gate decides per commit, so two things matter more than any flag.
+
+### Attest the commit Vercel builds, not the one you have checked out
+
+A pull request merged through the GitHub UI becomes a **new merge commit**. Your
+clone does not have it until you fetch, and a green run on the branch head says
+nothing about it — that `ci/local` status sits on the branch head, where nothing
+deploys.
+
+```sh
+git fetch origin main
+./scripts/local-ci.sh --status --sha "$(git rev-parse origin/main)"
+```
+
+`--sha` runs the suite on the current (clean) tree and posts the statuses to the
+named commit, but only when that commit's tree is identical to `HEAD`'s. When it
+is not, the script refuses instead of vouching for code it did not run. The
+honest ways to get a matching tree are to check the commit out (`git switch
+--detach <sha>`) or to merge locally and push, so that `HEAD` *is* the commit
+Vercel builds.
+
+`pending` is posted before the first step, so the gate waits for the suite
+instead of guessing; `success`/`failure` follows. That only works while the
+suite finishes inside `CI_GATE_TIMEOUT_MS` (12 minutes by default). A slower
+suite must raise that variable in Vercel, or it cancels its own deploy.
+
+### If the gate already gave up, redeploy — do not push again
+
+A cancelled deployment does not re-read the attestation when one appears later.
+Attest, then redeploy **that same deployment** (Vercel → Deployments → ⋯ →
+Redeploy, or `vercel redeploy <url>`). An empty "trigger" commit is not a retry:
+it puts a fresh sha in the gate's path with no evidence either.
+
+### Never release with `vercel --prod`
+
+A CLI deploy skips `ignoreCommand` entirely and uploads the working tree,
+uncommitted changes included. The deployment carries no commit metadata, so
+nothing can tie production to a sha — and `git log` stops describing what is
+live. If it is genuinely the only way out, run the full suite on that exact tree
+first and say in the release note that the deployment is unattested.
+
+## Verifying a release
+
+**A cancelled gated build is reported by Vercel as a successful commit status.**
+So `state: success` is not proof that anything shipped, and a "deploy status"
+helper that reads the combined commit status will report a gate cancellation as
+a release. The gate cannot change what Vercel writes; the check has to.
+
+Proof is a **READY production deployment whose commit metadata is the sha you
+meant to ship**:
+
+```sh
+vercel ls --environment production --json \
+  | jq -r '(.deployments // .)[] | select(.state == "READY")
+           | "\(.meta.githubCommitSha // "-")  \(.url)"' | head
+```
+
+A `-` in the first column is a CLI deployment with no commit behind it.
+`vercel inspect <url>` shows the same metadata.
+
 ## Limits worth knowing before you rely on this
 
 - **The attestation is self-asserted.** `ci/local` is a commit status your own
@@ -214,7 +284,21 @@ The token is fail-closed on purpose: missing or expired means skip, not build.
   gate waits. A month in local mode is cheap, but not free.
 - **The gate waits, then gives up.** No attestation means up to
   `CI_GATE_TIMEOUT_MS` (12 minutes) of polling, then skip. Attest first, then
-  deploy, and you never see the wait.
+  deploy, and you never see the wait. A late attestation does not revive a
+  cancelled deployment: redeploy it.
+- **The commit Vercel builds may not be your `HEAD`.** A UI merge is a new merge
+  commit. `--sha` attests it when the trees match; otherwise check it out and run
+  `--status` there.
+- **A slow suite cancels its own deploy.** The gate stops waiting after
+  `CI_GATE_TIMEOUT_MS` even when a `pending` attestation is there. If the suite
+  is longer than that, raise the variable in Vercel.
+- **A cancelled deployment is reported as a successful status.** Vercel writes
+  `Vercel: success — Canceled by Ignored Build Step`, so the combined commit
+  status cannot distinguish "shipped" from "skipped". Verify from the
+  deployment's commit metadata (see [Verifying a release](#verifying-a-release)).
+- **A CLI deploy escapes the gate.** `vercel --prod` uploads the working tree and
+  produces a deployment with no commit metadata; do not use it as a release
+  path.
 - **`ignoreCommand` in `vercel.json` beats the project setting.** Setting
   `commandForIgnoringBuildStep` on the project does not override the file; only
   editing the file (or Vercel's per-deploy "Use project's Ignore Build Step"
@@ -231,7 +315,11 @@ The token is fail-closed on purpose: missing or expired means skip, not build.
 
 **My deploy says "Canceled by Ignored Build Step".**
 The gate skipped it: CI concluded a failure, or there was no attestation for that
-commit. The deployment log says which (`[ci-gate] SKIP — …`).
+commit. The deployment log says which (`[ci-gate] SKIP — …`). For the second
+case, attest the sha Vercel built (`--status --sha <sha>`), then redeploy that
+deployment. Do not read the cancellation as a failure either: Vercel reports it
+as a *successful* commit status, so check the deployment's commit metadata before
+calling anything shipped.
 
 **Do I have to change anything when the minutes reset?**
 No. `--mode` starts answering `actions` again within five minutes, the hook steps
