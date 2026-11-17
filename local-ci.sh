@@ -22,9 +22,10 @@
 #   ./scripts/local-ci.sh --no-build     # skip `build` steps
 #   ./scripts/local-ci.sh --no-install   # skip `install` steps
 #   ./scripts/local-ci.sh --changed      # exit 0 when every change is markdown
-#   ./scripts/local-ci.sh --status       # post the `ci/local` status for HEAD
+#   ./scripts/local-ci.sh --status       # run every step, then attest HEAD
 #   ./scripts/local-ci.sh --status --sha <sha>
 #                                        # …for <sha>, when its tree matches HEAD
+#                                        # (refuses --fast/--no-*: no partial green)
 #   ./scripts/local-ci.sh --auto         # exit 0 when GitHub Actions is running
 #   ./scripts/local-ci.sh --mode         # print "actions" or "local"
 #   ./scripts/local-ci.sh --list         # print the steps and exit
@@ -155,6 +156,20 @@ if [ -n "$SHA_TARGET" ] && [ "$ATTEST" != 1 ]; then
   die "--sha names the commit to attest, so it only works with --status: ./scripts/local-ci.sh --status --sha <sha>"
 fi
 
+# An attestation says "this commit passed the suite". A run that skipped the
+# install or the build does not support that sentence, and the gate cannot tell
+# the difference — so refuse it unless the caller explicitly accepts the weaker
+# claim, which is then written into the status description.
+PARTIAL_SKIPPED=""
+if [ "$ATTEST" = 1 ]; then
+  [ "$SKIP_INSTALL" = 1 ] && PARTIAL_SKIPPED="install"
+  [ "$SKIP_BUILD" = 1 ] && PARTIAL_SKIPPED="${PARTIAL_SKIPPED:+$PARTIAL_SKIPPED, }build"
+  if [ -n "$PARTIAL_SKIPPED" ] && [ "${CI_ATTEST_PARTIAL:-0}" != 1 ]; then
+    die "--status refuses a partial run: --fast/--no-install/--no-build skip steps, so success would overstate what ran. Drop the skip flag, or set CI_ATTEST_PARTIAL=1 to attest the subset and record that in the status."
+  fi
+  [ -n "$PARTIAL_SKIPPED" ] && warn "attesting a PARTIAL run (skipped: $PARTIAL_SKIPPED) — the status will say so"
+fi
+
 # ------------------------------------------------------------------- secrets
 #
 # The one check GitHub will not run for a private repository on a free plan, and
@@ -192,6 +207,9 @@ fi
 
 
 if [ "$INSTALL_HOOK" = 1 ]; then
+  if [ ! -f .githooks/pre-push ]; then
+    die "no .githooks/pre-push in this repository — run install.sh (or copy .githooks/pre-push from local-ci) first. Pointing core.hooksPath at a missing hook makes git skip every check silently."
+  fi
   current=$(git config --get core.hooksPath 2>/dev/null || true)
   if [ "$current" != ".githooks" ]; then
     git config core.hooksPath .githooks || die "could not set core.hooksPath"
@@ -336,7 +354,9 @@ post_status() { # state, description
 
 if [ "$ATTEST" = 1 ]; then
   attest_setup
-  if post_status pending "local CI running on $(hostname -s 2>/dev/null || echo this machine)"; then
+  pending_desc="local CI running on $(hostname -s 2>/dev/null || echo this machine)"
+  [ -n "$PARTIAL_SKIPPED" ] && pending_desc="$pending_desc (partial: no $PARTIAL_SKIPPED)"
+  if post_status pending "$pending_desc"; then
     note "attestation: $CONTEXT → pending for ${SHA:0:8}"
   else
     warn "could not post the pending $CONTEXT status — the result will still be reported at the end"
@@ -397,6 +417,7 @@ if [ -n "$FAILED" ]; then
 else
   printf '\n  %spassed%s in %ss.\n' "$green" "$reset" "$TOTAL"
   ATTEST_DESC="local CI passed in ${TOTAL}s"
+  [ -n "$PARTIAL_SKIPPED" ] && ATTEST_DESC="$ATTEST_DESC (partial: no $PARTIAL_SKIPPED)"
 fi
 
 if [ "$ATTEST_READY" = 1 ]; then

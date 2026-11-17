@@ -146,6 +146,27 @@ rm -f "$work/gh.log"
 check "--status without --sha still attests HEAD" 0 "$(post_with_fake_gh --status)"
 check "…at HEAD's sha" 2 "$(grep -c "statuses/$same_b" "$work/gh.log")"
 
+# 8e. a partial run cannot be attested as if it were the whole suite
+check "--status --fast exits 2" 2 "$(run --status --fast)"
+grep -q 'partial' "$work/out" && ok "and says why" || bad "and says why"
+
+rm -f "$work/gh.log"
+check "CI_ATTEST_PARTIAL=1 allows a partial attestation" 0 \
+  "$(CI_ATTEST_PARTIAL=1 GH_LOG="$work/gh.log" PATH="$work/bin:$PATH" bash scripts/local-ci.sh --status --fast >"$work/out" 2>&1; echo $?)"
+grep -q 'partial' "$work/gh.log" && ok "and records that it was partial" || bad "and records that it was partial"
+
+# 8f. --install-hook refuses a missing hook rather than pointing git at nothing
+mkdir -p .githooks
+printf '#!/bin/sh\nexit 0\n' > .githooks/pre-push; chmod +x .githooks/pre-push
+check "--install-hook with the hook present exits 0" 0 "$(run --install-hook)"
+rm -f .githooks/pre-push
+check "--install-hook without the hook exits 2" 2 "$(run --install-hook)"
+grep -q 'missing hook' "$work/out" && ok "and explains why" || bad "and explains why"
+
+# 8g. --help
+check "--help exits 0" 0 "$(run --help)"
+grep -q -- '--status' "$work/out" && ok "--help lists --status" || bad "--help lists --status"
+
 # 9. --mode answers without exploding
 check "--mode exits 0" 0 "$(run --mode)"
 grep -qE '^(actions|local)' "$work/out" && ok "--mode prints a verdict" || bad "--mode prints a verdict"

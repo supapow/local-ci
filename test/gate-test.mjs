@@ -105,8 +105,13 @@ check('a never-run job + local failure skips', 0, (await runGate({ VERCEL_ENV: '
 scenario.attestation = null
 check('a never-run job with no attestation skips', 0, (await runGate({ VERCEL_ENV: 'production', GITHUB_READ_TOKEN: 'x' })).code)
 
+// 7b. a local run that errored is not evidence of a pass
+scenario.attestation = 'error'
+check('a never-run job + local error skips', 0, (await runGate({ VERCEL_ENV: 'production', GITHUB_READ_TOKEN: 'x' })).code)
+
 // 8. no run at all (markdown-only push) builds after the grace
 scenario.run = null
+scenario.attestation = null
 check('no run at all builds after the grace', 1, (await runGate({ VERCEL_ENV: 'production', GITHUB_READ_TOKEN: 'x' })).code)
 
 server.close()
