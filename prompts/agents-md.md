@@ -1,19 +1,3 @@
-# Copy-paste block for the repository's agent instructions
-
-`install.sh` and the setup prompt leave this file untouched: `AGENTS.md`,
-`CLAUDE.md`, `CONTRIBUTING.md` and friends belong to the repository, and an
-installer that edits them is an installer people stop running.
-
-Append the block below once, after `ci-local.conf` mirrors the workflow and the
-Vercel gate is in place. It is the part an agent cannot infer from the code: why
-a two-second red is not its bug, which commit to attest, and why a Vercel
-"success" does not mean a deploy happened. Everything here is true for any
-repository using local-ci — adjust only paths and the default branch if yours
-differ.
-
----
-
-```md
 ## CI and production deploys (local-ci)
 
 This repository uses local-ci: the same checks as its GitHub workflow, runnable
@@ -31,6 +15,9 @@ has no minutes left. The mirror lives in `ci-local.conf`; the gate is
 - A GitHub check that fails in ~2 seconds with **no steps, no runner and no log**
   is the free-plan billing block, not a test failure. Do not start debugging the
   code. Run the local suite instead.
+- `--status` runs the whole suite and refuses `--fast`, `--no-install` and
+  `--no-build`: a partial run is not the green the gate reads.
+  `CI_ATTEST_PARTIAL=1` is the explicit exception, and the status says so.
 
 ### Releasing
 
@@ -50,7 +37,8 @@ deployment.
   the working tree clean. To avoid the two-step entirely, merge locally and
   push: then `HEAD` is the commit Vercel builds and plain `--status` covers it.
 - `--status` posts `pending` before the first step, so the gate waits for the
-  suite instead of guessing, then posts `success` or `failure` for that sha.
+  suite instead of guessing, then posts `success` or `failure` for that sha. An
+  `error` state means the run aborted: the gate skips, so rerun and redeploy.
 - If the gated deployment already gave up (it is cancelled after about 12
   minutes), a late status does not revive it: attest, then **redeploy that same
   deployment** (Vercel → Deployments → ⋯ → Redeploy, or
@@ -80,7 +68,10 @@ vercel ls --environment production --json \
            | "\(.meta.githubCommitSha // "-")  \(.url)"' | head
 ```
 
-A `-` in the first column is a CLI deployment with no commit behind it.
+A `-` in the first column is a CLI deployment with no commit behind it. If the
+CLI output ever contains a raw control byte (it can inherit one from a commit
+message), `jq` rejects the whole payload — strip it first:
+`... --json | LC_ALL=C tr -d '\000-\010\013\014\016-\037' | jq ...`.
 
 ### Keep it honest
 
@@ -89,4 +80,3 @@ A `-` in the first column is a CLI deployment with no commit behind it.
 - Never weaken the gate or delete a step to make a run green.
 - Do not edit the vendored `scripts/local-ci.sh` or `scripts/vercel-gate.mjs`;
   sync from upstream instead, or the next update overwrites the change.
-```
